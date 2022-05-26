@@ -1,0 +1,468 @@
+<html>
+  <head>
+    <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CodeQL使用指南 | pananas</title>
+<link rel="shortcut icon" href="https://pananas1.github.io//favicon.ico?v=1653580662628">
+<link href="https://cdn.jsdelivr.net/npm/remixicon@2.3.0/fonts/remixicon.css" rel="stylesheet">
+<link rel="stylesheet" href="https://pananas1.github.io//styles/main.css">
+<link rel="alternate" type="application/atom+xml" title="CodeQL使用指南 | pananas - Atom Feed" href="https://pananas1.github.io//atom.xml">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Droid+Serif:400,700">
+
+
+
+    <meta name="description" content="安装
+1.codeql可执行文件：https://github.com/github/codeql-cli-binaries/releases
+2.SDK：https://github.com/github/codeql
+3.vscode安..." />
+    <meta name="keywords" content="" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.10.0/katex.min.css">
+    <script src="//cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.5.1/build/highlight.min.js"></script>
+  </head>
+  <body>
+    <div class="main">
+      <div class="main-content">
+        <div class="site-header">
+  <a href="https://pananas1.github.io/">
+  <img class="avatar" src="https://pananas1.github.io//images/avatar.png?v=1653580662628" alt="">
+  </a>
+  <h1 class="site-title">
+    pananas
+  </h1>
+  <p class="site-description">
+    这个人很懒
+  </p>
+  <div class="menu-container">
+    
+      
+        <a href="/" class="menu">
+          首页
+        </a>
+      
+    
+      
+        <a href="/archives" class="menu">
+          归档
+        </a>
+      
+    
+      
+        <a href="/tags" class="menu">
+          标签
+        </a>
+      
+    
+      
+        <a href="/post/about" class="menu">
+          关于
+        </a>
+      
+    
+  </div>
+  <div class="social-container">
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+  </div>
+</div>
+
+        <div class="post-detail">
+          <article class="post">
+            <h2 class="post-title">
+              CodeQL使用指南
+            </h2>
+            <div class="post-info">
+              <span>
+                2022-05-23
+              </span>
+              <span>
+                9 min read
+              </span>
+              
+            </div>
+            
+            <div class="post-content-wrapper">
+              <div class="post-content" v-pre>
+                <h2 id="安装">安装</h2>
+<p>1.codeql可执行文件：https://github.com/github/codeql-cli-binaries/releases<br>
+2.SDK：https://github.com/github/codeql<br>
+3.vscode安装codeql插件</p>
+<h2 id="命令">命令</h2>
+<h3 id="编译生成databasejava">编译生成database(java)</h3>
+<p><code>codeql database create [生成的数据库的路径] --language=java  --command=&quot;mvn clean install --file pom.xml -Dmaven.test.skip=true&quot; --source-root=[源码路径]</code><br>
+其中--command参数可选</p>
+<h3 id="批量执行ql文件并输出报告">批量执行ql文件，并输出报告</h3>
+<p><code>codeql database analyze /CodeQL/databases/micro-service-seclab /CodeQL/ql/java/ql/examples/demo --format=csv --output=/CodeQL/Result/micro-service-seclab.csv --rerun</code></p>
+<h3 id="批量指定sdk中内置的规则">批量指定SDK中内置的规则</h3>
+<p><code>odeql database analyze source_database_name qllib/java/ql/src/codeql-suites/java-security-extended.qls --format=csv --output=java-results.csv</code></p>
+<h2 id="简单使用">简单使用</h2>
+<h3 id="简单查询语句">简单查询语句</h3>
+<p>在sdk的java/ql/example目录下新建ql文件，写查询语句<br>
+按照方法名查询方法，并查询方法的类名：</p>
+<pre><code class="language-java">import java
+
+from Method method
+where method.hasName(&quot;getStudent&quot;)
+// getDeclaringType获取当前方法所属class的名字
+select method.getName(),method,method.getDeclaringType()
+</code></pre>
+<p>也可以将查询条件封装成函数（谓词），变为如下形式：</p>
+<pre><code class="language-java">import java
+
+// predicate 表示当前方法没有返回值
+predicate isStudent(Method method) {
+    // exists 子查询，根据内部的子查询返回true or false，来决定筛选出哪些数据
+    exists(|method.hasName(&quot;getStudent&quot;))
+}
+
+from Method method
+where isStudent(method)
+// getDeclaringType获取当前方法所属class的名字
+select method.getName(),method,method.getDeclaringType()
+</code></pre>
+<h3 id="source-sink-sanitizer">source、sink、sanitizer</h3>
+<p>source：漏洞污染链条的输入点，比如http请求的参数部分。<br>
+sink：漏洞污染链条的执行点，比如命令注入漏洞中的exec()<br>
+sanitizer：净化函数</p>
+<h4 id="在codeql中设置source">在CodeQL中设置source</h4>
+<pre><code class="language-java">override predicate isSource(DataFlow::Node src) {}
+</code></pre>
+<p>例如在SpringBoot框架中，source就是http参数入口的代码参数，那么设置source的代码为：</p>
+<pre><code class="language-java">  override predicate isSource(DataFlow::Node src) {
+       src instanceof RemoteFlowSource 
+    }
+</code></pre>
+<p>ps：这是SDK自带的规则，里面包含了大多数常用的source入口，包括SpringBoot，所以可以直接使用</p>
+<h4 id="在codeql中设置sink">在CodeQL中设置sink</h4>
+<pre><code class="language-java">override predicate isSink(DataFlow::Node sink) {}
+</code></pre>
+<p>例如：</p>
+<pre><code class="language-java">  override predicate isSink(DataFlow::Node sink) {
+    exists(Method method, MethodAccess call |
+      method.hasName(&quot;query&quot;)
+      and
+      call.getMethod() = method and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+</code></pre>
+<p>ps：以上代码使用了exists子查询语法，格式为exists(Obj obj| somthing), 上面查询的意思为：查找一个query()方法的调用点，并把它的第一个参数设置为sink。</p>
+<h4 id="flow数据流">Flow数据流</h4>
+<p>确定了source和sink之后，就需要确定source和sink是否可以连通，如果连通就表示存在漏洞。该连通工作由CodeQL引擎完成，我们可以使用<code>config.hasFlowPath(source, sink)</code>方法来判断是否连通。比如如下代码：</p>
+<pre><code class="language-java">from VulConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select source.getNode(), source, sink, &quot;source&quot;
+</code></pre>
+<p>我们传递给config.hasFlowPath(source, sink)我们定义好的source和sink，系统就会自动帮我们判断是否存在漏洞了。</p>
+<h5 id="完整代码">完整代码</h5>
+<p>上述过程的完整代码如下：</p>
+<pre><code class="language-java">import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.security.QueryInjection
+import DataFlow::PathGraph
+
+
+//使用官方提供的TaintTracking::Configuration方法定义source和sink，至于中间是否是通的，这个后面使用CodeQL提供的config.hasFlowPath(source, sink)来帮我们处理
+class VulConfig extends TaintTracking::Configuration {
+  VulConfig() { this = &quot;SqlInjectionConfig&quot; }
+
+  override predicate isSource(DataFlow::Node src) {
+      //表示src 必须是 RemoteFlowSource类型,在RemoteFlowSource里，官方提供很非常全的source定义
+      src instanceof RemoteFlowSource 
+    }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method method, MethodAccess call |
+      method.hasName(&quot;query&quot;)
+      and
+      call.getMethod() = method and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+}
+
+
+from VulConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select source.getNode(), source, sink, &quot;source&quot;
+</code></pre>
+<h4 id="误报解决sanitizer">误报解决sanitizer</h4>
+<p>比如上述代码在查找sql注入漏洞时，会认为参数是Long类型等不存在sql注入的source也存在sql注入漏洞。清除误报可以使用isSanitizer，函数原型：<br>
+<code>override predicate isSanitizer(DataFlow::Node node) {}</code><br>
+在CodeQL自带的默认规则里，对当前节点是否为基础类型做了判断。</p>
+<pre><code class="language-java">override predicate isSanitizer(DataFlow::Node node) {
+  node.getType() instanceof PrimitiveType or
+  node.getType() instanceof BoxedType or
+  node.getType() instanceof NumberType
+}
+</code></pre>
+<p>表示如果当前节点是上面提到的基础类型，那么此污染链将被净化阻断，漏洞将不存在<br>
+我们可以在原型的基础上添加规则，消除误报，比如：</p>
+<pre><code class="language-java">override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    node.getType() instanceof BoxedType or
+    node.getType() instanceof NumberType or
+    // 如果当前node节点的类型为基础类型，数字类型和泛型数字类型(比如List)时，就切断数据流
+    exists(ParameterizedType pt| node.getType() = pt and pt.getTypeArgument(0) instanceof NumberType )
+  }
+</code></pre>
+<h4 id="漏报解决">漏报解决</h4>
+<p><code>isAdditionalTaintStep</code>方法是CodeQL的类<code>TaintTracking::Configuration</code>提供的的方法，它的原型是：<br>
+<code>override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {}</code><br>
+它的作用是将一个可控节点A强制传递给另外一个节点B，那么节点B也就成了可控节点。<br>
+最终代码如下：</p>
+<pre><code class="language-java">/**
+ * @id java/examples/vuldemo
+ * @name Sql-Injection
+ * @description Sql-Injection
+ * @kind path-problem
+ * @problem.severity warning
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.security.QueryInjection
+import DataFlow::PathGraph
+
+predicate isTaintedString(Expr expSrc, Expr expDest) {
+    exists(Method method, MethodAccess call, MethodAccess call1 | expSrc = call1.getArgument(0) and expDest=call and call.getMethod() = method and method.hasName(&quot;get&quot;) and method.getDeclaringType().toString() = &quot;Optional&lt;String&gt;&quot; and call1.getArgument(0).getType().toString() = &quot;Optional&lt;String&gt;&quot;  )
+}
+
+class VulConfig extends TaintTracking::Configuration {
+  VulConfig() { this = &quot;SqlInjectionConfig&quot; }
+
+  override predicate isSource(DataFlow::Node src) { src instanceof RemoteFlowSource }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    node.getType() instanceof BoxedType or
+    node.getType() instanceof NumberType or
+    exists(ParameterizedType pt| node.getType() = pt and pt.getTypeArgument(0) instanceof NumberType )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method method, MethodAccess call |
+      method.hasName(&quot;query&quot;)
+      and
+      call.getMethod() = method and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    isTaintedString(node1.asExpr(), node2.asExpr())
+  }
+}
+
+
+from VulConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select source.getNode(), source, sink, &quot;source&quot;
+</code></pre>
+<h2 id="语法">语法</h2>
+<h3 id="根据method-name查询">根据method name查询</h3>
+<pre><code class="language-java">import java
+
+from Method method
+// 查找名称为toObject的方法
+where method.hasName(&quot;toObject&quot;)
+// method.getDeclaringType()表示方法的类型(class)
+select method,method.getDeclaringType()
+</code></pre>
+<h3 id="根据method-name和class-name查询">根据method name和class name查询</h3>
+<pre><code class="language-java">import java
+
+from Method method
+// 查询XStream类的fromXML方法
+where method.hasName(&quot;fromXML&quot;) and method.getDeclaringType().hasQualifiedName(&quot;com.thoughtworks.xstream&quot;, &quot;XStream&quot;)
+select method
+</code></pre>
+<p><code>predicate hasQualifiedName(string package, string type, string name)</code></p>
+<blockquote>
+<p>如果此成员具有指定的名称并在指定的包和类型中声明，则保留。</p>
+<blockquote>
+<p>Holds if this member has the specified name and is declared in the specified package and type.</p>
+</blockquote>
+</blockquote>
+<h3 id="根据method-name和interface-name查询">根据method name和interface name查询</h3>
+<pre><code class="language-java">import java
+
+//查询ContentTypeHandler 的所有子类toObject方法
+from Method method
+where method.hasName(&quot;toObject&quot;) and method.getDeclaringType().getASupertype().hasQualifiedName(&quot;org.apache.struts2.rest.handler&quot;, &quot;ContentTypeHandler&quot;)
+select method
+</code></pre>
+<p><code>RefType getASupertype()</code></p>
+<blockquote>
+<p>获取此类型的直接超类型。</p>
+<blockquote>
+<p>Gets a direct supertype of this type.</p>
+</blockquote>
+</blockquote>
+<p><code>RefType getAnAncestor()</code></p>
+<blockquote>
+<p>获取此类型的直接或间接超类型，包括其自身.</p>
+<blockquote>
+<p>Gets a direct or indirect supertype of this type, including itself.</p>
+</blockquote>
+</blockquote>
+<h3 id="获取method的parameter">获取method的parameter</h3>
+<p><code>Parameter getAParameter()</code><br>
+<code>getParameter(int n)</code></p>
+<blockquote>
+<p>获取此可调用对象的形式参数。</p>
+<blockquote>
+<p>Gets a formal parameter of this callable.</p>
+</blockquote>
+</blockquote>
+<p><code>Type getAParamType()</code><br>
+<code>getParameterType(int n)</code></p>
+<blockquote>
+<p>获取此可调用的形式参数的类型。</p>
+<blockquote>
+<p>Gets the type of a formal parameter of this callable.</p>
+</blockquote>
+</blockquote>
+<p><code>int getNumberOfParameters()</code></p>
+<blockquote>
+<p>获取此可调用的形式参数的数量。</p>
+<blockquote>
+<p>Gets the number of formal parameters of this callable.</p>
+</blockquote>
+</blockquote>
+<h2 id="进阶">进阶</h2>
+<p><a href="https://github.com/ice-doom/codeql_compile">反编译jar包生成datebase</a></p>
+<h2 id="踩坑">踩坑</h2>
+<h2 id="学习链接">学习链接</h2>
+<p>1.<a href="https://codeql.github.com/docs/codeql-cli/">官方文档</a><br>
+2.<a href="https://www.freebuf.com/articles/web/283795.html">CodeQL从入门到放弃 ps进阶部分没看</a><br>
+3.<a href="https://mp.weixin.qq.com/s?__biz=MzI4Mzc0MTI0Mw==&amp;mid=2247493662&amp;idx=2&amp;sn=8cead6291bb8f3c130093e6006089b5d&amp;chksm=eb84b54adcf33c5c6ef57c685d221fda68e0cedba2a59b886f3079d4d50884b70689c31d43b8&amp;mpshare=1&amp;scene=23&amp;srcid=0501LyVqcDU5vQ7Izenx2oim&amp;sharer_sharetime=1651408304150&amp;sharer_shareid=d74249cca329fbfc7dc218e59f3897aa#rd">原创 |CodeQL与AST之间联系</a></p>
+<p>https://mp.weixin.qq.com/s/jQfsUg4vhEs3XwTcXkqhyQ  58集团白盒代码审计系统建设实践2：深入理解SAST</p>
+<p>一些师傅整理的学习资源<br>
+https://github.com/safe6Sec/CodeqlNote</p>
+<p>https://github.com/ASTTeam/CodeQL  收集了一些优秀的规则</p>
+<p>https://github.com/ice-doom/CodeQLRule 个人编写的一些规则</p>
+
+              </div>
+              <div class="toc-container">
+                <ul class="markdownIt-TOC">
+<li>
+<ul>
+<li><a href="#%E5%AE%89%E8%A3%85">安装</a></li>
+<li><a href="#%E5%91%BD%E4%BB%A4">命令</a>
+<ul>
+<li><a href="#%E7%BC%96%E8%AF%91%E7%94%9F%E6%88%90databasejava">编译生成database(java)</a></li>
+<li><a href="#%E6%89%B9%E9%87%8F%E6%89%A7%E8%A1%8Cql%E6%96%87%E4%BB%B6%E5%B9%B6%E8%BE%93%E5%87%BA%E6%8A%A5%E5%91%8A">批量执行ql文件，并输出报告</a></li>
+<li><a href="#%E6%89%B9%E9%87%8F%E6%8C%87%E5%AE%9Asdk%E4%B8%AD%E5%86%85%E7%BD%AE%E7%9A%84%E8%A7%84%E5%88%99">批量指定SDK中内置的规则</a></li>
+</ul>
+</li>
+<li><a href="#%E7%AE%80%E5%8D%95%E4%BD%BF%E7%94%A8">简单使用</a>
+<ul>
+<li><a href="#%E7%AE%80%E5%8D%95%E6%9F%A5%E8%AF%A2%E8%AF%AD%E5%8F%A5">简单查询语句</a></li>
+<li><a href="#source-sink-sanitizer">source、sink、sanitizer</a>
+<ul>
+<li><a href="#%E5%9C%A8codeql%E4%B8%AD%E8%AE%BE%E7%BD%AEsource">在CodeQL中设置source</a></li>
+<li><a href="#%E5%9C%A8codeql%E4%B8%AD%E8%AE%BE%E7%BD%AEsink">在CodeQL中设置sink</a></li>
+<li><a href="#flow%E6%95%B0%E6%8D%AE%E6%B5%81">Flow数据流</a>
+<ul>
+<li><a href="#%E5%AE%8C%E6%95%B4%E4%BB%A3%E7%A0%81">完整代码</a></li>
+</ul>
+</li>
+<li><a href="#%E8%AF%AF%E6%8A%A5%E8%A7%A3%E5%86%B3sanitizer">误报解决sanitizer</a></li>
+<li><a href="#%E6%BC%8F%E6%8A%A5%E8%A7%A3%E5%86%B3">漏报解决</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#%E8%AF%AD%E6%B3%95">语法</a>
+<ul>
+<li><a href="#%E6%A0%B9%E6%8D%AEmethod-name%E6%9F%A5%E8%AF%A2">根据method name查询</a></li>
+<li><a href="#%E6%A0%B9%E6%8D%AEmethod-name%E5%92%8Cclass-name%E6%9F%A5%E8%AF%A2">根据method name和class name查询</a></li>
+<li><a href="#%E6%A0%B9%E6%8D%AEmethod-name%E5%92%8Cinterface-name%E6%9F%A5%E8%AF%A2">根据method name和interface name查询</a></li>
+<li><a href="#%E8%8E%B7%E5%8F%96method%E7%9A%84parameter">获取method的parameter</a></li>
+</ul>
+</li>
+<li><a href="#%E8%BF%9B%E9%98%B6">进阶</a></li>
+<li><a href="#%E8%B8%A9%E5%9D%91">踩坑</a></li>
+<li><a href="#%E5%AD%A6%E4%B9%A0%E9%93%BE%E6%8E%A5">学习链接</a></li>
+</ul>
+</li>
+</ul>
+
+              </div>
+            </div>
+          </article>
+        </div>
+
+        
+          <div class="next-post">
+            <div class="next">下一篇</div>
+            <a href="https://pananas1.github.io/post/1001/">
+              <h3 class="post-title">
+                Java Web常见漏洞代码审计
+              </h3>
+            </a>
+          </div>
+        
+
+        
+
+        <div class="site-footer">
+  
+  <a class="rss" href="https://pananas1.github.io//atom.xml" target="_blank">
+    <i class="ri-rss-line"></i> RSS
+  </a>
+</div>
+
+      </div>
+    </div>
+
+    <script>
+      hljs.initHighlightingOnLoad()
+
+      let mainNavLinks = document.querySelectorAll(".markdownIt-TOC a");
+
+      // This should probably be throttled.
+      // Especially because it triggers during smooth scrolling.
+      // https://lodash.com/docs/4.17.10#throttle
+      // You could do like...
+      // window.addEventListener("scroll", () => {
+      //    _.throttle(doThatStuff, 100);
+      // });
+      // Only not doing it here to keep this Pen dependency-free.
+
+      window.addEventListener("scroll", event => {
+        let fromTop = window.scrollY;
+
+        mainNavLinks.forEach((link, index) => {
+          let section = document.getElementById(decodeURI(link.hash).substring(1));
+          let nextSection = null
+          if (mainNavLinks[index + 1]) {
+            nextSection = document.getElementById(decodeURI(mainNavLinks[index + 1].hash).substring(1));
+          }
+          if (section.offsetTop <= fromTop) {
+            if (nextSection) {
+              if (nextSection.offsetTop > fromTop) {
+                link.classList.add("current");
+              } else {
+                link.classList.remove("current");    
+              }
+            } else {
+              link.classList.add("current");
+            }
+          } else {
+            link.classList.remove("current");
+          }
+        });
+      });
+
+    </script>
+  </body>
+</html>

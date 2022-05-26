@@ -1,0 +1,315 @@
+<html>
+  <head>
+    <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Java Web常见漏洞代码审计 | pananas</title>
+<link rel="shortcut icon" href="https://pananas1.github.io//favicon.ico?v=1653580662628">
+<link href="https://cdn.jsdelivr.net/npm/remixicon@2.3.0/fonts/remixicon.css" rel="stylesheet">
+<link rel="stylesheet" href="https://pananas1.github.io//styles/main.css">
+<link rel="alternate" type="application/atom+xml" title="Java Web常见漏洞代码审计 | pananas - Atom Feed" href="https://pananas1.github.io//atom.xml">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Droid+Serif:400,700">
+
+
+
+    <meta name="description" content="SQL注入(主要介绍Mybatis)
+0x00 漏洞成因
+select * from user where id = 1 or 1=1#
+0x01 审计思路
+1.mybatis的三种sql语句编写方式
+查看pom.xml中的依赖，确定项目使..." />
+    <meta name="keywords" content="代码审计,Java Web安全" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.10.0/katex.min.css">
+    <script src="//cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.5.1/build/highlight.min.js"></script>
+  </head>
+  <body>
+    <div class="main">
+      <div class="main-content">
+        <div class="site-header">
+  <a href="https://pananas1.github.io/">
+  <img class="avatar" src="https://pananas1.github.io//images/avatar.png?v=1653580662628" alt="">
+  </a>
+  <h1 class="site-title">
+    pananas
+  </h1>
+  <p class="site-description">
+    这个人很懒
+  </p>
+  <div class="menu-container">
+    
+      
+        <a href="/" class="menu">
+          首页
+        </a>
+      
+    
+      
+        <a href="/archives" class="menu">
+          归档
+        </a>
+      
+    
+      
+        <a href="/tags" class="menu">
+          标签
+        </a>
+      
+    
+      
+        <a href="/post/about" class="menu">
+          关于
+        </a>
+      
+    
+  </div>
+  <div class="social-container">
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+  </div>
+</div>
+
+        <div class="post-detail">
+          <article class="post">
+            <h2 class="post-title">
+              Java Web常见漏洞代码审计
+            </h2>
+            <div class="post-info">
+              <span>
+                2022-02-23
+              </span>
+              <span>
+                7 min read
+              </span>
+              
+                <a href="https://pananas1.github.io/tag/ilkyRXvht/" class="post-tag">
+                  # 代码审计
+                </a>
+              
+                <a href="https://pananas1.github.io/tag/e-U5c7wDUw/" class="post-tag">
+                  # Java Web安全
+                </a>
+              
+            </div>
+            
+            <div class="post-content-wrapper">
+              <div class="post-content" v-pre>
+                <h1 id="sql注入主要介绍mybatis">SQL注入(主要介绍Mybatis)</h1>
+<h2 id="0x00-漏洞成因">0x00 漏洞成因</h2>
+<p>select * from user where id = 1 or 1=1#</p>
+<h2 id="0x01-审计思路">0x01 审计思路</h2>
+<h3 id="1mybatis的三种sql语句编写方式">1.mybatis的三种sql语句编写方式</h3>
+<p>查看pom.xml中的依赖，确定项目使用了哪种持久层框架，本文以mybatis为例。在mybatis中有如下几种编写sql语句的方式：</p>
+<ol>
+<li>xml文件映射，文件名一般以*Mapper.xml命名，<pre><code class="language-xml">&lt;select id=&quot;selectByPrimaryKey&quot; parameterType=&quot;java.lang.Integer&quot; resultMap=&quot;BaseResultMap&quot;&gt;
+ select * from t_student where id = #{id}
+&lt;/select&gt;
+</code></pre>
+其中<code>id</code>为该sql语句的唯一标识，在Mapper接口中会有代码与之对应，使用IDEA按住ctrl+左键可直接跳转到对应的DAO层接口。<br>
+<code>parameterType</code>为参数类型,<code>resultMap</code>为结果集类型。</li>
+<li>SQL类构建sql语句，可以在代码中搜索SQL关键字，sql语句一般写在*SQLProvider.java命名的文件中，有的项目可能会对SQL类再次封装，总之找如下形式的代码即可。<pre><code class="language-java">return new SQL() {{
+ SELECT(&quot;*&quot;);
+ FROM(&quot;t_student&quot;);
+ WHERE(&quot;id = #{id}&quot;);
+ ORDER_BY(&quot;student_score&quot;);
+}}.toString();
+</code></pre>
+</li>
+<li>Mybatis3提供了基于注解的配置，这种一般就写在Dao层接口方法上。<pre><code class="language-java">@Insert(&quot;insert into xxxxx&quot;)
+</code></pre>
+</li>
+</ol>
+<h3 id="2审计要点">2.审计要点</h3>
+<p>Mybatis框架中，所有使用#{}方式传递的变量都会进行预编译处理，也就不会存在sql注入的问题。而使用${}方式则等价于参数拼接，可能存在sql注入问题。绝大多数情况下，开发都会使用#{}，但也有一些特殊场景无法使用预编译，这也是我们重点关注的地方。如下四种情况，如果使用#{}进行预编译，程序会出错：</p>
+<ol>
+<li><strong>like模糊查询</strong></li>
+<li><strong>order by排序</strong></li>
+<li><strong>in范围查询</strong></li>
+<li><strong>动态表名、列名</strong></li>
+</ol>
+<p>具体参考我的一篇博文<a href="https://blog.csdn.net/m0_61572518/article/details/123616037">【SQL注入】Mybatis框架下的sql注入白盒审计</a></p>
+<h2 id="0x03修复方案">0x03修复方案</h2>
+<ol>
+<li>针对like模糊查询<br>
+可使用mysql函数<code>concat</code>拼接字符串，<code>concat('%',#{key},'%')</code>。</li>
+<li>针对order by排序<br>
+对字段名、desc、asc进行白名单校验，可设置一个默认值。</li>
+<li>对于in范围查询<br>
+使用mybatis的foreach循环指令。</li>
+<li>对于动态表名、列名<br>
+最佳实践依然是白名单校验。<br>
+还有一些动态生成表名的场景，比如根据日期生成日志记录表，则可将除日期之外的部分写死，只允许外部输入int类型数据，总之尽可能的减少被攻击的风险。</li>
+</ol>
+<h1 id="命令注入">命令注入</h1>
+<h2 id="0x00-漏洞成因-2">0x00 漏洞成因</h2>
+<h2 id="0x01-审计思路-2">0x01 审计思路</h2>
+<h3 id="1命令执行相关方法">1.命令执行相关方法</h3>
+<p>Java原生的执行系统命令的API主要有以下两个：</p>
+<ol>
+<li><code>ProcessBuilder.start()</code><pre><code class="language-java"> ProcessBuilder processBuilder = new ProcessBuilder(&quot;ipconfig&quot;);
+ Process process = processBuilder.start();
+</code></pre>
+ProcessBuilder的构造函数可以接收<code>List&lt;String&gt;</code>和<code>String[]</code>类型的参数。传入的第一个参数为命令，其它参数为命令的参数。<br>
+也可以直接传入字符。</li>
+<li><code>Runtime.getRuntime.exec()</code><br>
+exec()方法有6个重载：<pre><code class="language-java"> // 在单独的进程中指定指定的字符串命令
+ public Process exec(String cmd)
+ // 在单独的进程中执行指定的命令和参数
+ public Process exec(String[] cmdarray)
+ // 在具有指定环境的单独进程中执行指定的命令和参数
+ public Process exec(String[] cmdarray, String[] envp)
+ // 在具有指定环境和工作目录的单独进程中执行指定的命令和参数
+ public Process exec(String[] cmdarray, String[] envp, File dir)
+ // 在具有指定环境的单独进程中执行指定的字符串命令
+ public Process exec(String cmd, String[] envp)
+ // 在具有指定环境和工作目录的单独进程中执行指定的字符串命令
+ public Process exec(String cmd, String[] envp, File dir)
+</code></pre>
+<code>Runtime.getRuntime.exec()</code>可以接收<code>String</code>和<code>String[]</code>，当传入<code>String[]</code>时，处理方式同<code>ProcessBuilder</code>(其实本质还是调用ProcessBuilder)。<br>
+当传入<code>String</code>时，会对字符串进行拆分，拆分逻辑如下：<pre><code class="language-java"> public StringTokenizer(String str) {
+     this(str, &quot; \t\n\r\f&quot;, false);
+ }
+</code></pre>
+比如<code>&quot;/bin/sh -c \&quot;ping -t 3 127.0.0.1;id\&quot;&quot;;</code>会被拆分成<code>{&quot;/bin/sh&quot;,&quot;-c&quot;,&quot;&quot;ping&quot;,&quot;-t&quot;,&quot;3&quot;,&quot;127.0.0.1;id&quot;,&quot;&quot;&quot;}</code>，因此如果只能传入String类型参数的话，需要使用一些字符来代替空格。比如<code>${IFS}</code>、<code>$IFS$9</code>等。（ps：URL中不允许出现{}符号，可以进行url编码）</li>
+<li>网上看到还有这两个API，但是我平时没见过，在JDK里也没搜到这两个类，不知道是什么原因。<code>UNIXProcess</code>、<code>ProcessImpl</code>.</li>
+</ol>
+<h3 id="2审计要点-2">2.审计要点</h3>
+<ol>
+<li>命令注入的参数是否外部可控。</li>
+<li>字符过滤是否完全，尽量过滤如下字符：<br>
+<code>&quot;|&quot; &quot;;&quot; &quot;&amp;&quot; &quot;$&quot; &quot;&gt;&quot; &quot;&lt;&quot; &quot;反引号&quot;</code></li>
+<li>根据业务需要使用白名单。<br>
+常见的存在命令注入的业务场景：</li>
+<li>压缩包解压场景；</li>
+<li>服务器文件操作；</li>
+<li>网站监测等。<br>
+案例：</li>
+<li><a href="https://www.sec-in.com/article/1392">username命令注入</a></li>
+</ol>
+<h2 id="0x03-修复方案">0x03 修复方案</h2>
+<p>校验入参</p>
+<h1 id="csrf">CSRF</h1>
+<h2 id="0x00-漏洞成因-3">0x00 漏洞成因</h2>
+<p>CSRF的介绍参考其他师傅的文章吧，随便贴一个<a href="https://www.cnblogs.com/phpstudy2015-6/p/6771239.html#_label1">CSRF攻击与防御</a><br>
+由于浏览器的特性，用户在已经登录A站点的情况下访问了攻击者的恶意站点B，攻击者在B站点构造恶意请求，使得用户使用攻击者构造的请求请求了A站点。（有点绕，还是看大佬文章吧）<br>
+举个例子，用户在A站点修改收货地址时，不小心点击了攻击者构造的链接，就会像A站点发送攻击者在恶意站点里构造好的恶意表单，此时收货地址就变成了攻击者的。<br>
+在这个过程中，攻击者无需知道用户信息，只需要构造一个合法的表单或者URL即可，浏览器会自动的将用户信息（cookie）添加到请求中。</p>
+<h2 id="0x01-审计思路-3">0x01 审计思路</h2>
+<p>对于CSRF，最便捷的方法还是抓包查看重要的请求中是否有CSRF-Token的请求头。<br>
+白盒方面主要看代码里CSRF-Token的生成方式是否足够安全，因为如果CSRF-Token可预测，攻击者仍然可以构造合法的请求。针对CSRF-Token自身的安全性，可从以下几个方面考虑：</p>
+<ol>
+<li>CSRF-Token的生成方式<br>
+比较好的做法是直接使用安全随机数生成24字节的字符串，如Java的<code>SecureRandom secureRandom = new SecureRandom();</code>，甚至可以再做一层加密<br>
+尽量不要将用户名、时间戳等参数与CSRF-Token相关联，降低可预测性。</li>
+<li>CSRF-Token的过期时间<br>
+CSRF-Token的过期时间最好小于会话时间，减少攻击时间窗。</li>
+<li>CSRF-Token的位置<br>
+可以放在请求头、请求体、请求参数中（一般都放在请求头里），但千万不要只放在cookie中，另外如果存放在cookie中，需要保证cookie不会被获取（如xss）。</li>
+</ol>
+<h2 id="0x02-修复方案">0x02 修复方案</h2>
+<p>最佳的解决方案还是在请求中添加CSRF-Token请求头，其它的还有验证码（用户体验差）、二次认证（用户体验差，不过对于一些非常重要的操作，也可以追加这种方案）。</p>
+
+              </div>
+              <div class="toc-container">
+                <ul class="markdownIt-TOC">
+<li><a href="#sql%E6%B3%A8%E5%85%A5%E4%B8%BB%E8%A6%81%E4%BB%8B%E7%BB%8Dmybatis">SQL注入(主要介绍Mybatis)</a>
+<ul>
+<li><a href="#0x00-%E6%BC%8F%E6%B4%9E%E6%88%90%E5%9B%A0">0x00 漏洞成因</a></li>
+<li><a href="#0x01-%E5%AE%A1%E8%AE%A1%E6%80%9D%E8%B7%AF">0x01 审计思路</a>
+<ul>
+<li><a href="#1mybatis%E7%9A%84%E4%B8%89%E7%A7%8Dsql%E8%AF%AD%E5%8F%A5%E7%BC%96%E5%86%99%E6%96%B9%E5%BC%8F">1.mybatis的三种sql语句编写方式</a></li>
+<li><a href="#2%E5%AE%A1%E8%AE%A1%E8%A6%81%E7%82%B9">2.审计要点</a></li>
+</ul>
+</li>
+<li><a href="#0x03%E4%BF%AE%E5%A4%8D%E6%96%B9%E6%A1%88">0x03修复方案</a></li>
+</ul>
+</li>
+<li><a href="#%E5%91%BD%E4%BB%A4%E6%B3%A8%E5%85%A5">命令注入</a>
+<ul>
+<li><a href="#0x00-%E6%BC%8F%E6%B4%9E%E6%88%90%E5%9B%A0-2">0x00 漏洞成因</a></li>
+<li><a href="#0x01-%E5%AE%A1%E8%AE%A1%E6%80%9D%E8%B7%AF-2">0x01 审计思路</a>
+<ul>
+<li><a href="#1%E5%91%BD%E4%BB%A4%E6%89%A7%E8%A1%8C%E7%9B%B8%E5%85%B3%E6%96%B9%E6%B3%95">1.命令执行相关方法</a></li>
+<li><a href="#2%E5%AE%A1%E8%AE%A1%E8%A6%81%E7%82%B9-2">2.审计要点</a></li>
+</ul>
+</li>
+<li><a href="#0x03-%E4%BF%AE%E5%A4%8D%E6%96%B9%E6%A1%88">0x03 修复方案</a></li>
+</ul>
+</li>
+<li><a href="#csrf">CSRF</a>
+<ul>
+<li><a href="#0x00-%E6%BC%8F%E6%B4%9E%E6%88%90%E5%9B%A0-3">0x00 漏洞成因</a></li>
+<li><a href="#0x01-%E5%AE%A1%E8%AE%A1%E6%80%9D%E8%B7%AF-3">0x01 审计思路</a></li>
+<li><a href="#0x02-%E4%BF%AE%E5%A4%8D%E6%96%B9%E6%A1%88">0x02 修复方案</a></li>
+</ul>
+</li>
+</ul>
+
+              </div>
+            </div>
+          </article>
+        </div>
+
+        
+
+        
+
+        <div class="site-footer">
+  
+  <a class="rss" href="https://pananas1.github.io//atom.xml" target="_blank">
+    <i class="ri-rss-line"></i> RSS
+  </a>
+</div>
+
+      </div>
+    </div>
+
+    <script>
+      hljs.initHighlightingOnLoad()
+
+      let mainNavLinks = document.querySelectorAll(".markdownIt-TOC a");
+
+      // This should probably be throttled.
+      // Especially because it triggers during smooth scrolling.
+      // https://lodash.com/docs/4.17.10#throttle
+      // You could do like...
+      // window.addEventListener("scroll", () => {
+      //    _.throttle(doThatStuff, 100);
+      // });
+      // Only not doing it here to keep this Pen dependency-free.
+
+      window.addEventListener("scroll", event => {
+        let fromTop = window.scrollY;
+
+        mainNavLinks.forEach((link, index) => {
+          let section = document.getElementById(decodeURI(link.hash).substring(1));
+          let nextSection = null
+          if (mainNavLinks[index + 1]) {
+            nextSection = document.getElementById(decodeURI(mainNavLinks[index + 1].hash).substring(1));
+          }
+          if (section.offsetTop <= fromTop) {
+            if (nextSection) {
+              if (nextSection.offsetTop > fromTop) {
+                link.classList.add("current");
+              } else {
+                link.classList.remove("current");    
+              }
+            } else {
+              link.classList.add("current");
+            }
+          } else {
+            link.classList.remove("current");
+          }
+        });
+      });
+
+    </script>
+  </body>
+</html>

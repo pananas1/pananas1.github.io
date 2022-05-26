@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <id>https://pananas1.github.io/</id>
+    <title>pananas</title>
+    <updated>2022-05-26T15:57:48.534Z</updated>
+    <generator>https://github.com/jpmonette/feed</generator>
+    <link rel="alternate" href="https://pananas1.github.io/"/>
+    <link rel="self" href="https://pananas1.github.io/atom.xml"/>
+    <subtitle>这个人很懒</subtitle>
+    <logo>https://pananas1.github.io/images/avatar.png</logo>
+    <icon>https://pananas1.github.io/favicon.ico</icon>
+    <rights>All rights reserved 2022, pananas</rights>
+    <entry>
+        <title type="html"><![CDATA[CodeQL使用指南]]></title>
+        <id>https://pananas1.github.io/post/20220502/</id>
+        <link href="https://pananas1.github.io/post/20220502/">
+        </link>
+        <updated>2022-05-23T15:19:38.000Z</updated>
+        <content type="html"><![CDATA[<h2 id="安装">安装</h2>
+<p>1.codeql可执行文件：https://github.com/github/codeql-cli-binaries/releases<br>
+2.SDK：https://github.com/github/codeql<br>
+3.vscode安装codeql插件</p>
+<h2 id="命令">命令</h2>
+<h3 id="编译生成databasejava">编译生成database(java)</h3>
+<p><code>codeql database create [生成的数据库的路径] --language=java  --command=&quot;mvn clean install --file pom.xml -Dmaven.test.skip=true&quot; --source-root=[源码路径]</code><br>
+其中--command参数可选</p>
+<h3 id="批量执行ql文件并输出报告">批量执行ql文件，并输出报告</h3>
+<p><code>codeql database analyze /CodeQL/databases/micro-service-seclab /CodeQL/ql/java/ql/examples/demo --format=csv --output=/CodeQL/Result/micro-service-seclab.csv --rerun</code></p>
+<h3 id="批量指定sdk中内置的规则">批量指定SDK中内置的规则</h3>
+<p><code>odeql database analyze source_database_name qllib/java/ql/src/codeql-suites/java-security-extended.qls --format=csv --output=java-results.csv</code></p>
+<h2 id="简单使用">简单使用</h2>
+<h3 id="简单查询语句">简单查询语句</h3>
+<p>在sdk的java/ql/example目录下新建ql文件，写查询语句<br>
+按照方法名查询方法，并查询方法的类名：</p>
+<pre><code class="language-java">import java
+
+from Method method
+where method.hasName(&quot;getStudent&quot;)
+// getDeclaringType获取当前方法所属class的名字
+select method.getName(),method,method.getDeclaringType()
+</code></pre>
+<p>也可以将查询条件封装成函数（谓词），变为如下形式：</p>
+<pre><code class="language-java">import java
+
+// predicate 表示当前方法没有返回值
+predicate isStudent(Method method) {
+    // exists 子查询，根据内部的子查询返回true or false，来决定筛选出哪些数据
+    exists(|method.hasName(&quot;getStudent&quot;))
+}
+
+from Method method
+where isStudent(method)
+// getDeclaringType获取当前方法所属class的名字
+select method.getName(),method,method.getDeclaringType()
+</code></pre>
+<h3 id="source-sink-sanitizer">source、sink、sanitizer</h3>
+<p>source：漏洞污染链条的输入点，比如http请求的参数部分。<br>
+sink：漏洞污染链条的执行点，比如命令注入漏洞中的exec()<br>
+sanitizer：净化函数</p>
+<h4 id="在codeql中设置source">在CodeQL中设置source</h4>
+<pre><code class="language-java">override predicate isSource(DataFlow::Node src) {}
+</code></pre>
+<p>例如在SpringBoot框架中，source就是http参数入口的代码参数，那么设置source的代码为：</p>
+<pre><code class="language-java">  override predicate isSource(DataFlow::Node src) {
+       src instanceof RemoteFlowSource 
+    }
+</code></pre>
+<p>ps：这是SDK自带的规则，里面包含了大多数常用的source入口，包括SpringBoot，所以可以直接使用</p>
+<h4 id="在codeql中设置sink">在CodeQL中设置sink</h4>
+<pre><code class="language-java">override predicate isSink(DataFlow::Node sink) {}
+</code></pre>
+<p>例如：</p>
+<pre><code class="language-java">  override predicate isSink(DataFlow::Node sink) {
+    exists(Method method, MethodAccess call |
+      method.hasName(&quot;query&quot;)
+      and
+      call.getMethod() = method and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+</code></pre>
+<p>ps：以上代码使用了exists子查询语法，格式为exists(Obj obj| somthing), 上面查询的意思为：查找一个query()方法的调用点，并把它的第一个参数设置为sink。</p>
+<h4 id="flow数据流">Flow数据流</h4>
+<p>确定了source和sink之后，就需要确定source和sink是否可以连通，如果连通就表示存在漏洞。该连通工作由CodeQL引擎完成，我们可以使用<code>config.hasFlowPath(source, sink)</code>方法来判断是否连通。比如如下代码：</p>
+<pre><code class="language-java">from VulConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select source.getNode(), source, sink, &quot;source&quot;
+</code></pre>
+<p>我们传递给config.hasFlowPath(source, sink)我们定义好的source和sink，系统就会自动帮我们判断是否存在漏洞了。</p>
+<h5 id="完整代码">完整代码</h5>
+<p>上述过程的完整代码如下：</p>
+<pre><code class="language-java">import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.security.QueryInjection
+import DataFlow::PathGraph
+
+
+//使用官方提供的TaintTracking::Configuration方法定义source和sink，至于中间是否是通的，这个后面使用CodeQL提供的config.hasFlowPath(source, sink)来帮我们处理
+class VulConfig extends TaintTracking::Configuration {
+  VulConfig() { this = &quot;SqlInjectionConfig&quot; }
+
+  override predicate isSource(DataFlow::Node src) {
+      //表示src 必须是 RemoteFlowSource类型,在RemoteFlowSource里，官方提供很非常全的source定义
+      src instanceof RemoteFlowSource 
+    }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method method, MethodAccess call |
+      method.hasName(&quot;query&quot;)
+      and
+      call.getMethod() = method and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+}
+
+
+from VulConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select source.getNode(), source, sink, &quot;source&quot;
+</code></pre>
+<h4 id="误报解决sanitizer">误报解决sanitizer</h4>
+<p>比如上述代码在查找sql注入漏洞时，会认为参数是Long类型等不存在sql注入的source也存在sql注入漏洞。清除误报可以使用isSanitizer，函数原型：<br>
+<code>override predicate isSanitizer(DataFlow::Node node) {}</code><br>
+在CodeQL自带的默认规则里，对当前节点是否为基础类型做了判断。</p>
+<pre><code class="language-java">override predicate isSanitizer(DataFlow::Node node) {
+  node.getType() instanceof PrimitiveType or
+  node.getType() instanceof BoxedType or
+  node.getType() instanceof NumberType
+}
+</code></pre>
+<p>表示如果当前节点是上面提到的基础类型，那么此污染链将被净化阻断，漏洞将不存在<br>
+我们可以在原型的基础上添加规则，消除误报，比如：</p>
+<pre><code class="language-java">override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    node.getType() instanceof BoxedType or
+    node.getType() instanceof NumberType or
+    // 如果当前node节点的类型为基础类型，数字类型和泛型数字类型(比如List)时，就切断数据流
+    exists(ParameterizedType pt| node.getType() = pt and pt.getTypeArgument(0) instanceof NumberType )
+  }
+</code></pre>
+<h4 id="漏报解决">漏报解决</h4>
+<p><code>isAdditionalTaintStep</code>方法是CodeQL的类<code>TaintTracking::Configuration</code>提供的的方法，它的原型是：<br>
+<code>override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {}</code><br>
+它的作用是将一个可控节点A强制传递给另外一个节点B，那么节点B也就成了可控节点。<br>
+最终代码如下：</p>
+<pre><code class="language-java">/**
+ * @id java/examples/vuldemo
+ * @name Sql-Injection
+ * @description Sql-Injection
+ * @kind path-problem
+ * @problem.severity warning
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.security.QueryInjection
+import DataFlow::PathGraph
+
+predicate isTaintedString(Expr expSrc, Expr expDest) {
+    exists(Method method, MethodAccess call, MethodAccess call1 | expSrc = call1.getArgument(0) and expDest=call and call.getMethod() = method and method.hasName(&quot;get&quot;) and method.getDeclaringType().toString() = &quot;Optional&lt;String&gt;&quot; and call1.getArgument(0).getType().toString() = &quot;Optional&lt;String&gt;&quot;  )
+}
+
+class VulConfig extends TaintTracking::Configuration {
+  VulConfig() { this = &quot;SqlInjectionConfig&quot; }
+
+  override predicate isSource(DataFlow::Node src) { src instanceof RemoteFlowSource }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    node.getType() instanceof BoxedType or
+    node.getType() instanceof NumberType or
+    exists(ParameterizedType pt| node.getType() = pt and pt.getTypeArgument(0) instanceof NumberType )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method method, MethodAccess call |
+      method.hasName(&quot;query&quot;)
+      and
+      call.getMethod() = method and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    isTaintedString(node1.asExpr(), node2.asExpr())
+  }
+}
+
+
+from VulConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select source.getNode(), source, sink, &quot;source&quot;
+</code></pre>
+<h2 id="语法">语法</h2>
+<h3 id="根据method-name查询">根据method name查询</h3>
+<pre><code class="language-java">import java
+
+from Method method
+// 查找名称为toObject的方法
+where method.hasName(&quot;toObject&quot;)
+// method.getDeclaringType()表示方法的类型(class)
+select method,method.getDeclaringType()
+</code></pre>
+<h3 id="根据method-name和class-name查询">根据method name和class name查询</h3>
+<pre><code class="language-java">import java
+
+from Method method
+// 查询XStream类的fromXML方法
+where method.hasName(&quot;fromXML&quot;) and method.getDeclaringType().hasQualifiedName(&quot;com.thoughtworks.xstream&quot;, &quot;XStream&quot;)
+select method
+</code></pre>
+<p><code>predicate hasQualifiedName(string package, string type, string name)</code></p>
+<blockquote>
+<p>如果此成员具有指定的名称并在指定的包和类型中声明，则保留。</p>
+<blockquote>
+<p>Holds if this member has the specified name and is declared in the specified package and type.</p>
+</blockquote>
+</blockquote>
+<h3 id="根据method-name和interface-name查询">根据method name和interface name查询</h3>
+<pre><code class="language-java">import java
+
+//查询ContentTypeHandler 的所有子类toObject方法
+from Method method
+where method.hasName(&quot;toObject&quot;) and method.getDeclaringType().getASupertype().hasQualifiedName(&quot;org.apache.struts2.rest.handler&quot;, &quot;ContentTypeHandler&quot;)
+select method
+</code></pre>
+<p><code>RefType getASupertype()</code></p>
+<blockquote>
+<p>获取此类型的直接超类型。</p>
+<blockquote>
+<p>Gets a direct supertype of this type.</p>
+</blockquote>
+</blockquote>
+<p><code>RefType getAnAncestor()</code></p>
+<blockquote>
+<p>获取此类型的直接或间接超类型，包括其自身.</p>
+<blockquote>
+<p>Gets a direct or indirect supertype of this type, including itself.</p>
+</blockquote>
+</blockquote>
+<h3 id="获取method的parameter">获取method的parameter</h3>
+<p><code>Parameter getAParameter()</code><br>
+<code>getParameter(int n)</code></p>
+<blockquote>
+<p>获取此可调用对象的形式参数。</p>
+<blockquote>
+<p>Gets a formal parameter of this callable.</p>
+</blockquote>
+</blockquote>
+<p><code>Type getAParamType()</code><br>
+<code>getParameterType(int n)</code></p>
+<blockquote>
+<p>获取此可调用的形式参数的类型。</p>
+<blockquote>
+<p>Gets the type of a formal parameter of this callable.</p>
+</blockquote>
+</blockquote>
+<p><code>int getNumberOfParameters()</code></p>
+<blockquote>
+<p>获取此可调用的形式参数的数量。</p>
+<blockquote>
+<p>Gets the number of formal parameters of this callable.</p>
+</blockquote>
+</blockquote>
+<h2 id="进阶">进阶</h2>
+<p><a href="https://github.com/ice-doom/codeql_compile">反编译jar包生成datebase</a></p>
+<h2 id="踩坑">踩坑</h2>
+<h2 id="学习链接">学习链接</h2>
+<p>1.<a href="https://codeql.github.com/docs/codeql-cli/">官方文档</a><br>
+2.<a href="https://www.freebuf.com/articles/web/283795.html">CodeQL从入门到放弃 ps进阶部分没看</a><br>
+3.<a href="https://mp.weixin.qq.com/s?__biz=MzI4Mzc0MTI0Mw==&amp;mid=2247493662&amp;idx=2&amp;sn=8cead6291bb8f3c130093e6006089b5d&amp;chksm=eb84b54adcf33c5c6ef57c685d221fda68e0cedba2a59b886f3079d4d50884b70689c31d43b8&amp;mpshare=1&amp;scene=23&amp;srcid=0501LyVqcDU5vQ7Izenx2oim&amp;sharer_sharetime=1651408304150&amp;sharer_shareid=d74249cca329fbfc7dc218e59f3897aa#rd">原创 |CodeQL与AST之间联系</a></p>
+<p>https://mp.weixin.qq.com/s/jQfsUg4vhEs3XwTcXkqhyQ  58集团白盒代码审计系统建设实践2：深入理解SAST</p>
+<p>一些师傅整理的学习资源<br>
+https://github.com/safe6Sec/CodeqlNote</p>
+<p>https://github.com/ASTTeam/CodeQL  收集了一些优秀的规则</p>
+<p>https://github.com/ice-doom/CodeQLRule 个人编写的一些规则</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[Java Web常见漏洞代码审计]]></title>
+        <id>https://pananas1.github.io/post/1001/</id>
+        <link href="https://pananas1.github.io/post/1001/">
+        </link>
+        <updated>2022-02-23T14:56:19.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="sql注入主要介绍mybatis">SQL注入(主要介绍Mybatis)</h1>
+<h2 id="0x00-漏洞成因">0x00 漏洞成因</h2>
+<p>select * from user where id = 1 or 1=1#</p>
+<h2 id="0x01-审计思路">0x01 审计思路</h2>
+<h3 id="1mybatis的三种sql语句编写方式">1.mybatis的三种sql语句编写方式</h3>
+<p>查看pom.xml中的依赖，确定项目使用了哪种持久层框架，本文以mybatis为例。在mybatis中有如下几种编写sql语句的方式：</p>
+<ol>
+<li>xml文件映射，文件名一般以*Mapper.xml命名，<pre><code class="language-xml">&lt;select id=&quot;selectByPrimaryKey&quot; parameterType=&quot;java.lang.Integer&quot; resultMap=&quot;BaseResultMap&quot;&gt;
+ select * from t_student where id = #{id}
+&lt;/select&gt;
+</code></pre>
+其中<code>id</code>为该sql语句的唯一标识，在Mapper接口中会有代码与之对应，使用IDEA按住ctrl+左键可直接跳转到对应的DAO层接口。<br>
+<code>parameterType</code>为参数类型,<code>resultMap</code>为结果集类型。</li>
+<li>SQL类构建sql语句，可以在代码中搜索SQL关键字，sql语句一般写在*SQLProvider.java命名的文件中，有的项目可能会对SQL类再次封装，总之找如下形式的代码即可。<pre><code class="language-java">return new SQL() {{
+ SELECT(&quot;*&quot;);
+ FROM(&quot;t_student&quot;);
+ WHERE(&quot;id = #{id}&quot;);
+ ORDER_BY(&quot;student_score&quot;);
+}}.toString();
+</code></pre>
+</li>
+<li>Mybatis3提供了基于注解的配置，这种一般就写在Dao层接口方法上。<pre><code class="language-java">@Insert(&quot;insert into xxxxx&quot;)
+</code></pre>
+</li>
+</ol>
+<h3 id="2审计要点">2.审计要点</h3>
+<p>Mybatis框架中，所有使用#{}方式传递的变量都会进行预编译处理，也就不会存在sql注入的问题。而使用${}方式则等价于参数拼接，可能存在sql注入问题。绝大多数情况下，开发都会使用#{}，但也有一些特殊场景无法使用预编译，这也是我们重点关注的地方。如下四种情况，如果使用#{}进行预编译，程序会出错：</p>
+<ol>
+<li><strong>like模糊查询</strong></li>
+<li><strong>order by排序</strong></li>
+<li><strong>in范围查询</strong></li>
+<li><strong>动态表名、列名</strong></li>
+</ol>
+<p>具体参考我的一篇博文<a href="https://blog.csdn.net/m0_61572518/article/details/123616037">【SQL注入】Mybatis框架下的sql注入白盒审计</a></p>
+<h2 id="0x03修复方案">0x03修复方案</h2>
+<ol>
+<li>针对like模糊查询<br>
+可使用mysql函数<code>concat</code>拼接字符串，<code>concat('%',#{key},'%')</code>。</li>
+<li>针对order by排序<br>
+对字段名、desc、asc进行白名单校验，可设置一个默认值。</li>
+<li>对于in范围查询<br>
+使用mybatis的foreach循环指令。</li>
+<li>对于动态表名、列名<br>
+最佳实践依然是白名单校验。<br>
+还有一些动态生成表名的场景，比如根据日期生成日志记录表，则可将除日期之外的部分写死，只允许外部输入int类型数据，总之尽可能的减少被攻击的风险。</li>
+</ol>
+<h1 id="命令注入">命令注入</h1>
+<h2 id="0x00-漏洞成因-2">0x00 漏洞成因</h2>
+<h2 id="0x01-审计思路-2">0x01 审计思路</h2>
+<h3 id="1命令执行相关方法">1.命令执行相关方法</h3>
+<p>Java原生的执行系统命令的API主要有以下两个：</p>
+<ol>
+<li><code>ProcessBuilder.start()</code><pre><code class="language-java"> ProcessBuilder processBuilder = new ProcessBuilder(&quot;ipconfig&quot;);
+ Process process = processBuilder.start();
+</code></pre>
+ProcessBuilder的构造函数可以接收<code>List&lt;String&gt;</code>和<code>String[]</code>类型的参数。传入的第一个参数为命令，其它参数为命令的参数。<br>
+也可以直接传入字符。</li>
+<li><code>Runtime.getRuntime.exec()</code><br>
+exec()方法有6个重载：<pre><code class="language-java"> // 在单独的进程中指定指定的字符串命令
+ public Process exec(String cmd)
+ // 在单独的进程中执行指定的命令和参数
+ public Process exec(String[] cmdarray)
+ // 在具有指定环境的单独进程中执行指定的命令和参数
+ public Process exec(String[] cmdarray, String[] envp)
+ // 在具有指定环境和工作目录的单独进程中执行指定的命令和参数
+ public Process exec(String[] cmdarray, String[] envp, File dir)
+ // 在具有指定环境的单独进程中执行指定的字符串命令
+ public Process exec(String cmd, String[] envp)
+ // 在具有指定环境和工作目录的单独进程中执行指定的字符串命令
+ public Process exec(String cmd, String[] envp, File dir)
+</code></pre>
+<code>Runtime.getRuntime.exec()</code>可以接收<code>String</code>和<code>String[]</code>，当传入<code>String[]</code>时，处理方式同<code>ProcessBuilder</code>(其实本质还是调用ProcessBuilder)。<br>
+当传入<code>String</code>时，会对字符串进行拆分，拆分逻辑如下：<pre><code class="language-java"> public StringTokenizer(String str) {
+     this(str, &quot; \t\n\r\f&quot;, false);
+ }
+</code></pre>
+比如<code>&quot;/bin/sh -c \&quot;ping -t 3 127.0.0.1;id\&quot;&quot;;</code>会被拆分成<code>{&quot;/bin/sh&quot;,&quot;-c&quot;,&quot;&quot;ping&quot;,&quot;-t&quot;,&quot;3&quot;,&quot;127.0.0.1;id&quot;,&quot;&quot;&quot;}</code>，因此如果只能传入String类型参数的话，需要使用一些字符来代替空格。比如<code>${IFS}</code>、<code>$IFS$9</code>等。（ps：URL中不允许出现{}符号，可以进行url编码）</li>
+<li>网上看到还有这两个API，但是我平时没见过，在JDK里也没搜到这两个类，不知道是什么原因。<code>UNIXProcess</code>、<code>ProcessImpl</code>.</li>
+</ol>
+<h3 id="2审计要点-2">2.审计要点</h3>
+<ol>
+<li>命令注入的参数是否外部可控。</li>
+<li>字符过滤是否完全，尽量过滤如下字符：<br>
+<code>&quot;|&quot; &quot;;&quot; &quot;&amp;&quot; &quot;$&quot; &quot;&gt;&quot; &quot;&lt;&quot; &quot;反引号&quot;</code></li>
+<li>根据业务需要使用白名单。<br>
+常见的存在命令注入的业务场景：</li>
+<li>压缩包解压场景；</li>
+<li>服务器文件操作；</li>
+<li>网站监测等。<br>
+案例：</li>
+<li><a href="https://www.sec-in.com/article/1392">username命令注入</a></li>
+</ol>
+<h2 id="0x03-修复方案">0x03 修复方案</h2>
+<p>校验入参</p>
+<h1 id="csrf">CSRF</h1>
+<h2 id="0x00-漏洞成因-3">0x00 漏洞成因</h2>
+<p>CSRF的介绍参考其他师傅的文章吧，随便贴一个<a href="https://www.cnblogs.com/phpstudy2015-6/p/6771239.html#_label1">CSRF攻击与防御</a><br>
+由于浏览器的特性，用户在已经登录A站点的情况下访问了攻击者的恶意站点B，攻击者在B站点构造恶意请求，使得用户使用攻击者构造的请求请求了A站点。（有点绕，还是看大佬文章吧）<br>
+举个例子，用户在A站点修改收货地址时，不小心点击了攻击者构造的链接，就会像A站点发送攻击者在恶意站点里构造好的恶意表单，此时收货地址就变成了攻击者的。<br>
+在这个过程中，攻击者无需知道用户信息，只需要构造一个合法的表单或者URL即可，浏览器会自动的将用户信息（cookie）添加到请求中。</p>
+<h2 id="0x01-审计思路-3">0x01 审计思路</h2>
+<p>对于CSRF，最便捷的方法还是抓包查看重要的请求中是否有CSRF-Token的请求头。<br>
+白盒方面主要看代码里CSRF-Token的生成方式是否足够安全，因为如果CSRF-Token可预测，攻击者仍然可以构造合法的请求。针对CSRF-Token自身的安全性，可从以下几个方面考虑：</p>
+<ol>
+<li>CSRF-Token的生成方式<br>
+比较好的做法是直接使用安全随机数生成24字节的字符串，如Java的<code>SecureRandom secureRandom = new SecureRandom();</code>，甚至可以再做一层加密<br>
+尽量不要将用户名、时间戳等参数与CSRF-Token相关联，降低可预测性。</li>
+<li>CSRF-Token的过期时间<br>
+CSRF-Token的过期时间最好小于会话时间，减少攻击时间窗。</li>
+<li>CSRF-Token的位置<br>
+可以放在请求头、请求体、请求参数中（一般都放在请求头里），但千万不要只放在cookie中，另外如果存放在cookie中，需要保证cookie不会被获取（如xss）。</li>
+</ol>
+<h2 id="0x02-修复方案">0x02 修复方案</h2>
+<p>最佳的解决方案还是在请求中添加CSRF-Token请求头，其它的还有验证码（用户体验差）、二次认证（用户体验差，不过对于一些非常重要的操作，也可以追加这种方案）。</p>
+]]></content>
+    </entry>
+</feed>
